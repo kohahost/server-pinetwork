@@ -21,7 +21,7 @@ module.exports = {
       "PORT": 31401,
       "TARGET_SERVER_URL": "http://113.160.156.51:31401", // Ganti jika perlu
       "REQUESTS_PER_SECOND": 100, // Atur sesuai rate limit target
-      "ENABLE_LOGGING": "true"     // "false" untuk mematikan log demi kecepatan penuh
+      "ENABLE_LOGGING": "false"     // "false" untuk mematikan log demi kecepatan penuh
     }
   }]
 };
