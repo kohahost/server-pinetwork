@@ -6,23 +6,27 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Ganti ini dengan server target
-const TARGET_SERVER_URL = 'https://178.128.176.205/';
+// Alamat server target Pi Network atau IP lain
+const TARGET_SERVER_URL = 'https://178.128.176.205';
 
-// Middleware untuk log IP dan request
+// Middleware untuk log IP dan permintaan
 app.use((req, res, next) => {
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-  console.log(`[${new Date().toISOString()}] ${ip} - ${req.method} ${req.originalUrl}`);
+  const now = new Date().toISOString();
+  const method = req.method;
+  const url = req.originalUrl;
+
+  console.log(`[${now}] ${ip} - ${method} ${url}`);
   next();
 });
 
-// Middleware proxy: teruskan semua request ke server target
+// Middleware untuk meneruskan semua request ke server target
 app.use('/', createProxyMiddleware({
   target: TARGET_SERVER_URL,
   changeOrigin: true,
-  secure: false, // abaikan SSL error karena IP
+  secure: false, // abaikan SSL error jika pakai IP
   onProxyReq: (proxyReq, req, res) => {
-    console.log(`[PROXY] Meneruskan ${req.method} ${req.originalUrl}`);
+    // Bisa tambahkan log tambahan di sini kalau perlu
   },
   onError: (err, req, res) => {
     console.error('[PROXY ERROR]', err.message);
