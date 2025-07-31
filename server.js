@@ -8,7 +8,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Target server tujuan (contoh: node Pi Network)
-const TARGET_SERVER_URL = 'https://178.128.176.205';
+const TARGET_SERVER_URL = 'http://113.160.156.51:31401';
 
 // ==============================
 // 1. BUAT RATE LIMIT: 100 REQ/DETIK
