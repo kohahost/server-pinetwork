@@ -12,7 +12,7 @@ module.exports = {
 
     // --- Pengaturan Lainnya ---
     watch: false,                 // Jangan memantau perubahan file di produksi
-    max_memory_restart: '500M',   // Restart jika memori melebihi 250MB
+    max_memory_restart: '250M',   // Restart jika memori melebihi 250MB
 
     // --- Variabel Lingkungan untuk Performa Maksimal ---
     // Atur semua konfigurasi di sini. Tidak perlu file .env lagi saat pakai PM2.
