@@ -7,7 +7,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Alamat server target Pi Network atau IP lain
-const TARGET_SERVER_URL = 'https://178.128.176.205';
+const TARGET_SERVER_URL = 'https://api.mainnet.minepi.com';
 
 // Middleware untuk log IP dan permintaan
 app.use((req, res, next) => {
