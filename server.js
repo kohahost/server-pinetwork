@@ -1,142 +1,129 @@
-// File: server.js
-
 // =================================================================
-// 0. IMPOR MODUL & MUAT KONFIGURASI
+// 0. IMPOR MODUL
 // =================================================================
-require('dotenv').config(); // Muat variabel dari file .env
-
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const Bottleneck = require('bottleneck');
-const os = require('os'); // Modul untuk mendapatkan info sistem seperti IP
+const http = require('http'); // Modul inti untuk optimisasi koneksi
 
 // =================================================================
-// 1. AMBIL KONFIGURASI DARI FILE .env
+// 1. AMBIL KONFIGURASI DARI PM2 (ENVIRONMENT VARIABLES)
 // =================================================================
+// Pengaturan ini diambil dari file ecosystem.config.js
 const PORT = process.env.PORT || 31401;
 const TARGET_SERVER_URL = process.env.TARGET_SERVER_URL;
 const REQUESTS_PER_SECOND = parseInt(process.env.REQUESTS_PER_SECOND || '100', 10);
+const ENABLE_LOGGING = process.env.ENABLE_LOGGING === 'true'; // Mengontrol semua logging
 
+// Validasi konfigurasi penting
 if (!TARGET_SERVER_URL) {
-  console.error("Kesalahan: TARGET_SERVER_URL tidak diatur di file .env. Harap periksa file .env Anda.");
-  process.exit(1); // Keluar jika URL target tidak ada
+  console.error(`[PID: ${process.pid}] KESALAHAN FATAL: TARGET_SERVER_URL tidak diatur di file konfigurasi.`);
+  process.exit(1); // Keluar jika konfigurasi utama tidak ada
 }
 
 // =================================================================
-// 2. BUAT RATE LIMITER (ANTRIAN)
+// 2. OPTIMISASI KONEKSI DENGAN HTTP AGENT (KUNCI UTAMA KECEPATAN)
+// =================================================================
+// Ini membuat koneksi ke server target tetap terbuka (Keep-Alive) dan
+// digunakan kembali. Menghilangkan waktu "jabat tangan" TCP/TLS yang mahal.
+const httpAgent = new http.Agent({
+  keepAlive: true,       // Jaga koneksi tetap hidup! Ini SANGAT PENTING.
+  maxSockets: 200,       // Jumlah koneksi simultan maksimum yang diizinkan ke server target.
+  maxFreeSockets: 20,    // Jumlah koneksi cadangan yang tetap terbuka & siap pakai.
+  timeout: 60000,        // Timeout koneksi dalam milidetik.
+  keepAliveMsecs: 30000  // Seberapa sering mengirim sinyal keep-alive untuk mencegah koneksi ditutup oleh server target.
+});
+
+// =================================================================
+// 3. BUAT RATE LIMITER (PENGATUR ANTRIAN)
 // =================================================================
 const minTime = 1000 / REQUESTS_PER_SECOND;
-const limiter = new Bottleneck({
-  minTime: minTime 
-});
+const limiter = new Bottleneck({ minTime: minTime });
 
-// Log status antrian secara berkala untuk monitoring
-setInterval(() => {
-  const counts = limiter.counts();
-  console.log(`[QUEUE_STATUS] Running: ${counts.RUNNING}, Queued: ${counts.QUEUED}, Done: ${counts.DONE}`);
-}, 5000); // Cek setiap 5 detik
+// Hanya jalankan logging status jika diaktifkan, untuk menghemat resource CPU.
+if (ENABLE_LOGGING) {
+  setInterval(() => {
+    const counts = limiter.counts();
+    console.log(`[PID: ${process.pid}] [QUEUE] Running: ${counts.RUNNING}, Queued: ${counts.QUEUED}, Done: ${counts.DONE}`);
+  }, 5000);
+}
 
 // =================================================================
-// 3. SIAPKAN SERVER EXPRESS & MIDDLEWARE
+// 4. SIAPKAN SERVER EXPRESS YANG SUDAH DI-TUNING
 // =================================================================
 const app = express();
+app.disable('x-powered-by'); // Optimisasi kecil: matikan header yang tidak perlu.
 
-// Middleware untuk mencatat setiap permintaan yang masuk
-app.use((req, res, next) => {
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-  const now = new Date().toISOString();
-  console.log(`[${now}] [REQUEST_IN] ${ip} - ${req.method} ${req.originalUrl}`);
-  next();
-});
+// Middleware untuk mencatat setiap permintaan yang masuk (jika diaktifkan)
+if (ENABLE_LOGGING) {
+  app.use((req, res, next) => {
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    // Log ini akan muncul setiap ada request yang masuk
+    console.log(`[PID: ${process.pid}] [REQUEST_IN] ${ip} - ${req.method} ${req.originalUrl}`);
+    next();
+  });
+}
 
-// Konfigurasi middleware proxy
+// Konfigurasi proxy yang sudah di-tuning untuk menggunakan agent kita
 const proxyMiddleware = createProxyMiddleware({
   target: TARGET_SERVER_URL,
   changeOrigin: true,
-  secure: false, // Izinkan proxy ke target dengan sertifikat self-signed
+  agent: httpAgent, // <<< INI YANG MEMBUATNYA SANGAT CEPAT
+  secure: false,
+  logLevel: 'silent', // Matikan log bawaan dari proxy middleware agar tidak duplikat
   onError: (err, req, res) => {
-    console.error('[PROXY ERROR]', err.message);
+    if (ENABLE_LOGGING) console.error(`[PID: ${process.pid}] [PROXY ERROR] ${err.message}`);
     if (!res.headersSent) {
-      res.status(502).send('Proxy Error: Tidak dapat terhubung ke server target.');
+      res.status(502).send('Proxy Error: Bad Gateway');
     }
   }
 });
 
-// Middleware utama yang menggabungkan antrian dan proxy
+// Middleware utama: Semua request masuk ke sini, dijadwalkan, lalu diproses.
 app.use('/', (req, res) => {
-  // Jadwalkan permintaan untuk diproses oleh proxy
-  limiter.schedule(() => {
-    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-    console.log(`[REQUEST_PROCESS] Melepaskan request dari antrian: ${ip} - ${req.method} ${req.originalUrl}`);
-    // Panggil middleware proxy setelah lolos dari antrian
-    proxyMiddleware(req, res);
-  }).catch(err => {
-    // Penanganan jika scheduler gagal (misalnya saat server sedang dimatikan)
-    console.error('[SCHEDULER_ERROR]', err);
-    if (!res.headersSent) {
-      res.status(529).send('Server sedang sibuk, silakan coba lagi nanti.'); // HTTP 529 Site is overloaded
-    }
-  });
-});
-
-// =================================================================
-// 4. FUNGSI BANTUAN & JALANKAN SERVER
-// =================================================================
-
-// Fungsi untuk mendapatkan Alamat IP Lokal server
-function getLocalIpAddress() {
-  const networkInterfaces = os.networkInterfaces();
-  for (const interfaceName in networkInterfaces) {
-    const networkInterface = networkInterfaces[interfaceName];
-    for (const anInterface of networkInterface) {
-      // Lewati alamat internal (seperti 127.0.0.1) dan non-IPv4
-      if (anInterface.family === 'IPv4' && !anInterface.internal) {
-        return anInterface.address;
+  limiter.schedule(() => proxyMiddleware(req, res))
+    .catch(err => {
+      // Terjadi jika scheduler error, jarang terjadi kecuali saat server shutdown.
+      if (ENABLE_LOGGING) console.error(`[PID: ${process.pid}] [SCHEDULER ERROR] ${err.message}`);
+      if (!res.headersSent) {
+        res.status(529).send('Server Overloaded');
       }
-    }
-  }
-  return null;
-}
-
-// Jalankan server
-const server = app.listen(PORT, () => {
-  const localIp = getLocalIpAddress();
-
-  console.log('==============================================');
-  console.log('🚀 PROXY SERVER ANDA SUDAH AKTIF');
-  console.log('----------------------------------------------');
-  console.log('Alamat untuk mengakses proxy:');
-  console.log(`   - Dari Komputer Ini (Local): http://localhost:${PORT}`);
-  if (localIp) {
-    console.log(`   - Dari Jaringan Lokal (LAN): http://${localIp}:${PORT}`);
-  }
-  console.log('----------------------------------------------');
-  console.log(`➡️  Meneruskan ke target: ${TARGET_SERVER_URL}`);
-  console.log(`⏱️  Rate Limit yang diterapkan: ${REQUESTS_PER_SECOND} request/detik`);
-  console.log('==============================================');
+    });
 });
 
 // =================================================================
-// 5. TANGANI GRACEFUL SHUTDOWN (MATI SECARA AMAN)
+// 5. JALANKAN SERVER
+// =================================================================
+const server = app.listen(PORT, () => {
+    console.log('==============================================');
+    console.log(`🚀 Proxy Tempur Siap di Port ${PORT} | Worker PID: ${process.pid}`);
+    // Log detail hanya akan muncul sekali dari worker pertama untuk kebersihan log
+    if (process.env.NODE_APP_INSTANCE === '0' || !process.env.NODE_APP_INSTANCE) {
+        console.log(`➡️  Menargetkan: ${TARGET_SERVER_URL}`);
+        console.log(`⏱️  Rate Limit: ${REQUESTS_PER_SECOND} req/detik`);
+        console.log(`⚡ Mode Logging: ${ENABLE_LOGGING ? 'AKTIF' : 'NON-AKTIF (PERFORMA MAKSIMAL)'}`);
+    }
+    console.log('==============================================');
+});
+
+// =================================================================
+// 6. TANGANI GRACEFUL SHUTDOWN (MATI SECARA AMAN)
 // =================================================================
 const gracefulShutdown = () => {
-  console.log('\n[SERVER_SHUTDOWN] Menerima sinyal untuk mematikan server.');
-  console.log('[SERVER_SHUTDOWN] Menyelesaikan permintaan yang tersisa di antrian...');
+  console.log(`\n[PID: ${process.pid}] Menerima sinyal untuk mematikan server...`);
+  console.log(`[PID: ${process.pid}] Menyelesaikan permintaan yang tersisa di antrian...`);
   
   // Beri waktu 10 detik untuk menyelesaikan antrian sebelum mematikan paksa
   limiter.disconnect(10000).then(() => {
-    console.log('[QUEUE_STATUS] Semua antrian telah selesai diproses.');
+    console.log(`[PID: ${process.pid}] Semua antrian telah selesai.`);
     server.close(() => {
-      console.log('[SERVER_SHUTDOWN] Server berhasil dimatikan.');
+      console.log(`[PID: ${process.pid}] Server berhasil dimatikan.`);
       process.exit(0);
     });
   });
-
-  setTimeout(() => {
-    console.error('[SERVER_SHUTDOWN] Gagal mematikan server dengan baik, mematikan secara paksa.');
-    process.exit(1);
-  }, 10000);
 };
 
-process.on('SIGTERM', gracefulShutdown); // Sinyal mati dari 'kill' atau orchestrator (Docker, Kubernetes)
-process.on('SIGINT', gracefulShutdown);  // Sinyal mati dari Ctrl+C di terminal
+// Sinyal mati dari 'kill' atau orchestrator (Docker, Kubernetes)
+process.on('SIGTERM', gracefulShutdown);
+// Sinyal mati dari Ctrl+C di terminal
+process.on('SIGINT', gracefulShutdown);
