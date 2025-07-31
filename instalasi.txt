@@ -1,2 +1,2 @@
 npm init -y
-npm install express http-proxy-middleware
+npm install express http-proxy-middleware bottleneck dotenv
