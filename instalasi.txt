@@ -1,7 +1,8 @@
-npm init -y
-
-# 3. Instal semua paket yang dibutuhkan
+Instal semua paket yang dibutuhkan
 npm install express http-proxy-middleware bottleneck dotenv
 
-# 4. Instal PM2 secara global jika belum ada
+Instal PM2 secara global jika belum ada
 npm install pm2 -g
+
+jalankan server
+pm2 start ecosystem.config.js
