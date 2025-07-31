@@ -13,7 +13,7 @@ const http = require('http'); // Modul inti untuk optimisasi koneksi
 const PORT = process.env.PORT || 31401;
 const TARGET_SERVER_URL = process.env.TARGET_SERVER_URL;
 const REQUESTS_PER_SECOND = parseInt(process.env.REQUESTS_PER_SECOND || '100', 10);
-const ENABLE_LOGGING = process.env.ENABLE_LOGGING === 'true'; // Mengontrol semua logging
+const ENABLE_LOGGING = process.env.ENABLE_LOGGING === 'false'; // Mengontrol semua logging
 
 // Validasi konfigurasi penting
 if (!TARGET_SERVER_URL) {
